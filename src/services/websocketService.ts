@@ -39,13 +39,16 @@ class WebSocketService {
   private onParticipantUpdateCallbacks: ((participants: StreamParticipant[]) => void)[] = [];
   private onChallengeUpdateCallbacks: ((challenges: ChallengeInfo[]) => void)[] = [];
 
-  // WebSocket server URL
-  private wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:5000';
+  // WebSocket server URL (Socket.IO expects http(s) URL)
+  private wsUrl = process.env.REACT_APP_WS_URL || 'http://localhost:5000';
+
+  private currentChallengeId: string | null = null;
 
   connect(userId: string, token?: string): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.socket = io(this.wsUrl, {
+        const url = this.wsUrl;
+        this.socket = io(url, {
           auth: {
             userId,
             token
@@ -54,7 +57,9 @@ class WebSocketService {
         });
 
         this.socket.on('connect', () => {
-          console.log('WebSocket connected:', this.socket?.id);
+          console.log('WebSocket connected:', this.socket?.id, 'as user', userId);
+          // Notify backend to mark user online and broadcast friend status
+          this.socket?.emit('user-connect', { userId });
           resolve();
         });
 
@@ -62,14 +67,46 @@ class WebSocketService {
           console.log('WebSocket disconnected:', reason);
         });
 
+        this.socket.on('connect_error', (err: any) => {
+          console.error('WebSocket connect_error:', err?.message || err);
+        });
         this.socket.on('error', (error: any) => {
           console.error('WebSocket error:', error);
           reject(error);
         });
 
-        // Handle incoming messages
-        this.socket.on('stream-message', (message: StreamMessage) => {
-          this.handleStreamMessage(message);
+        // --- Backend socket event mappings ---
+        // 1) Acknowledgement on joining stream
+        this.socket.on('stream-joined', (payload: { challengeId: string; viewerId: string; viewerCount: number; timestamp: number; }) => {
+          // Emit a viewer-joined-like message for UI purposes
+          this.handleStreamMessage({ type: 'viewer-joined', data: { userId: payload.viewerId }, from: payload.viewerId, timestamp: payload.timestamp });
+        });
+
+        // 2) Viewer join/leave notifications
+        this.socket.on('viewer-joined', (payload: { challengeId: string; viewerId: string; viewerCount: number; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'viewer-joined', data: { userId: payload.viewerId }, from: payload.viewerId, timestamp: payload.timestamp });
+        });
+        this.socket.on('viewer-left', (payload: { challengeId: string; viewerId: string; viewerCount: number; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'viewer-left', data: { userId: payload.viewerId }, from: payload.viewerId, timestamp: payload.timestamp });
+        });
+
+        // 3) Chat messages
+        this.socket.on('stream-chat', (chatPayload: { id: string; challengeId: string; userId: string; message: string; messageType: string; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'chat', data: { message: chatPayload.message, challengeId: chatPayload.challengeId }, from: chatPayload.userId, timestamp: chatPayload.timestamp });
+        });
+
+        // 4) WebRTC signaling passthrough
+        this.socket.on('stream-signal', (payload: { signal: any; from?: string }) => {
+          const { signal, from } = payload || {};
+          if (!signal) return;
+          const ts = Date.now();
+          if (signal.type === 'offer') {
+            this.handleStreamMessage({ type: 'offer', data: signal, from: from || 'unknown', timestamp: ts });
+          } else if (signal.type === 'answer') {
+            this.handleStreamMessage({ type: 'answer', data: signal, from: from || 'unknown', timestamp: ts });
+          } else if (signal.candidate) {
+            this.handleStreamMessage({ type: 'ice-candidate', data: signal, from: from || 'unknown', timestamp: ts });
+          }
         });
 
         this.socket.on('participants-update', (participants: StreamParticipant[]) => {
@@ -103,66 +140,40 @@ class WebSocketService {
       console.error('WebSocket not connected');
       return;
     }
-
-    this.socket.emit('join-challenge', {
-      challengeId,
-      userId,
-      opponentId,
-      isViewer
-    });
+    this.currentChallengeId = challengeId;
+    // Backend expects a single challengeId for join
+    this.socket.emit('join-challenge-stream', challengeId);
   }
 
   // Leave a challenge stream
   leaveChallenge(challengeId: string, userId: string): void {
     if (!this.socket) return;
-
-    this.socket.emit('leave-challenge', {
-      challengeId,
-      userId
-    });
+    this.socket.emit('leave-challenge-stream', challengeId);
+    if (this.currentChallengeId === challengeId) this.currentChallengeId = null;
   }
 
   // Send WebRTC offer
   sendOffer(to: string, offer: RTCSessionDescriptionInit): void {
-    this.sendMessage({
-      type: 'offer',
-      data: offer,
-      from: this.getCurrentUserId(),
-      to,
-      timestamp: Date.now()
-    });
+    if (!this.socket || !this.currentChallengeId) return;
+    this.socket.emit('stream-signal', { challengeId: this.currentChallengeId, signal: offer });
   }
 
   // Send WebRTC answer
   sendAnswer(to: string, answer: RTCSessionDescriptionInit): void {
-    this.sendMessage({
-      type: 'answer',
-      data: answer,
-      from: this.getCurrentUserId(),
-      to,
-      timestamp: Date.now()
-    });
+    if (!this.socket || !this.currentChallengeId) return;
+    this.socket.emit('stream-signal', { challengeId: this.currentChallengeId, signal: answer });
   }
 
   // Send ICE candidate
   sendIceCandidate(to: string, candidate: RTCIceCandidateInit): void {
-    this.sendMessage({
-      type: 'ice-candidate',
-      data: candidate,
-      from: this.getCurrentUserId(),
-      to,
-      timestamp: Date.now()
-    });
+    if (!this.socket || !this.currentChallengeId) return;
+    this.socket.emit('stream-signal', { challengeId: this.currentChallengeId, signal: candidate });
   }
 
   // Send chat message
   sendChatMessage(message: string, challengeId: string): void {
-    this.sendMessage({
-      type: 'chat',
-      data: { message, challengeId },
-      from: this.getCurrentUserId(),
-      timestamp: Date.now()
-    });
+    if (!this.socket) return;
+    this.socket.emit('send-stream-chat', { challengeId, message });
   }
 
   // Create a new challenge
@@ -182,9 +193,8 @@ class WebSocketService {
     return 'unknown';
   }
 
-  private sendMessage(message: StreamMessage): void {
-    if (!this.socket) return;
-    this.socket.emit('stream-message', message);
+  private sendMessage(_message: StreamMessage): void {
+    // No-op: backend uses specific events; kept for backward compatibility
   }
 
   private handleStreamMessage(message: StreamMessage): void {

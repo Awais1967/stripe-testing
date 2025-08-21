@@ -614,8 +614,9 @@ export class ApiService {
   }
 
   // Challenge endpoints
-  static async getChallenges() {
-    const response = await apiClient.get('/challenges');
+  static async getChallenges(userId: string) {
+    // Backend exposes GET /v1/challenge/pending/:userId
+    const response = await apiClient.get(`/challenge/pending/${userId}`);
     return response.data;
   }
 
@@ -640,8 +641,10 @@ export class ApiService {
   }
 
   static async joinChallenge(challengeId: string, userId: string) {
-    const response = await apiClient.post(`/challenges/${challengeId}/join`, {
-      userId
+    // Backend expects POST /v1/challenge/join with body { challenge_id, user_id }
+    const response = await apiClient.post(`/challenge/join`, {
+      challenge_id: challengeId,
+      user_id: userId
     });
     return response.data;
   }

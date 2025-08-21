@@ -20,6 +20,7 @@ import ResponseDebugger from './components/ResponseDebugger';
 import WithdrawalRequest from './components/WithdrawalRequest';
 import WithdrawalApproval from './components/WithdrawalApproval';
 import FriendRequestWebSocketTester from './components/FriendRequestWebSocketTester';
+import JoinChallenge from './components/JoinChallenge';
 
 function App() {
   return (
@@ -49,6 +50,7 @@ function App() {
             <Route path="/withdrawal-approval" element={<WithdrawalApproval />} />
             <Route path="/websocket-tester" element={<FriendRequestWebSocketTester />} />
             <Route path="/challenges" element={<Challenges />} />
+            <Route path="/join-challenge" element={<JoinChallenge />} />
             <Route path="/stream/:challengeId/:userId" element={<LiveVideoStream />} />
             <Route path="/stream/:challengeId/:userId/:opponentId" element={<LiveVideoStream />} />
           </Routes>

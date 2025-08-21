@@ -144,7 +144,7 @@ const WithdrawalRequest: React.FC = () => {
       return;
     }
 
-    if (numAmount < 10) {
+    if (numAmount < 1) {
       setError('Minimum withdrawal amount is $10');
       return;
     }
@@ -297,13 +297,13 @@ const WithdrawalRequest: React.FC = () => {
               id="amount"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              min="10"
+              min="1"
               max={wallet?.balance || 0}
               step="0.01"
               required
               placeholder="Enter amount to withdraw"
             />
-            <small>Minimum: $10 | Maximum: ${wallet?.balance?.toFixed(2) || '0.00'}</small>
+            <small>Minimum: $1 | Maximum: ${wallet?.balance?.toFixed(2) || '0.00'}</small>
           </div>
 
           <div className="form-group">

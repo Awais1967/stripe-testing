@@ -33,7 +33,11 @@ const Challenges: React.FC = () => {
     const userData = localStorage.getItem('user');
     if (userData) {
       const user = JSON.parse(userData);
-      websocketService.connect(user._id);
+      const uid = user._id || user.id;
+      if (!uid) {
+        console.warn('No user id found on stored user object');
+      }
+      websocketService.connect(uid || 'unknown');
       websocketService.onChallengeUpdate(handleChallengeUpdate);
     }
   };
@@ -45,8 +49,31 @@ const Challenges: React.FC = () => {
   const loadChallenges = async () => {
     try {
       setLoading(true);
-      const response = await ApiService.getChallenges();
-      setChallenges(response);
+      const userData = localStorage.getItem('user');
+      if (!userData) {
+        setError('No user data found');
+        return;
+      }
+      const user = JSON.parse(userData);
+      const userId = user._id || user.id;
+      if (!userId) {
+        setError('Logged-in user is missing id');
+        return;
+      }
+      const pending = await ApiService.getChallenges(userId);
+      // pending is an array of items with keys challenge_id, opponent_id, opponent_name, etc.
+      const mapped: ChallengeInfo[] = (pending || []).map((p: any) => ({
+        challengeId: p.challenge_id,
+        title: p.opponent_name ? `Match vs ${p.opponent_name}` : 'Pending Challenge',
+        description: p.match_type_name || 'Pending challenge awaiting opponent',
+        hostId: userId,
+        opponentId: p.opponent_id || undefined,
+        status: (p.status || 'waiting') as any,
+        viewers: 0,
+        startTime: undefined,
+        endTime: undefined,
+      }));
+      setChallenges(mapped);
     } catch (err: any) {
       console.error('Failed to load challenges:', err);
       setError('Failed to load challenges');
@@ -99,7 +126,7 @@ const Challenges: React.FC = () => {
     }
   };
 
-  const handleJoinChallenge = (challenge: ChallengeInfo, asViewer: boolean = false) => {
+  const handleJoinChallenge = async (challenge: ChallengeInfo, asViewer: boolean = false) => {
     const userData = localStorage.getItem('user');
     if (!userData) {
       setError('No user data found');
@@ -107,13 +134,30 @@ const Challenges: React.FC = () => {
     }
 
     const user = JSON.parse(userData);
-    
+    const userId = user._id || user.id;
+    if (!userId) {
+      setError('Logged-in user is missing id');
+      return;
+    }
+
     if (asViewer) {
       // Join as viewer
-      navigate(`/stream/${challenge.challengeId}/${user._id}`);
+      navigate(`/stream/${challenge.challengeId}/${userId}`);
     } else {
-      // Join as participant
-      navigate(`/stream/${challenge.challengeId}/${user._id}/${challenge.hostId}`);
+      try {
+        setLoading(true);
+        setError('');
+        const resp = await ApiService.joinChallenge(challenge.challengeId, userId);
+        setSuccess(resp?.message || 'Joined challenge successfully');
+        // Navigate to stream after successful join
+        navigate(`/stream/${challenge.challengeId}/${userId}/${challenge.hostId}`);
+      } catch (err: any) {
+        console.error('Join challenge failed:', err);
+        const msg = err?.response?.data?.message || err.message || 'Failed to join challenge';
+        setError(msg);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -144,6 +188,12 @@ const Challenges: React.FC = () => {
           className="create-challenge-btn"
         >
           Create New Challenge
+        </button>
+        <button
+          onClick={() => navigate('/join-challenge')}
+          className="join-challenge-btn"
+        >
+          Join by Code
         </button>
       </div>
 

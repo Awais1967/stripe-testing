@@ -97,7 +97,7 @@ const TopUp: React.FC = () => {
 
   const initializeStripe = () => {
     try {
-      const stripeInstance = window.Stripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY || 'pk_test_51RZ9YHR2j8tclsSALzGk4vhOJS6nSP89bbZhH0Xq7MTtAdfu9kJsJRT0vro2BqKN60OLoIVUJLtd6iGim7g4uBom00muP06y7f');
+      const stripeInstance = window.Stripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY || 'pk_test_51RwHymPxgJrEvxYCAtWfJ1nu9KKGhdPKuQJ7wFIOi6EgHweZPLTX5avOiQ4QztoPyC0WhPFdbqRapalcSVUMSVr400y5Rhg2Lg');
       const elementsInstance = stripeInstance.elements();
       
       // Create card element
@@ -171,19 +171,19 @@ const TopUp: React.FC = () => {
       console.log('Payment intent response:', response);
       setPaymentIntent(response);
 
-             // Confirm card payment
-       const { error, paymentIntent: confirmedPaymentIntent } = await stripeState.stripe.confirmCardPayment(
-         response.clientSecret,
-         {
-           payment_method: {
-             card: stripeState.cardElement,
-             billing_details: {
-               name: user.name || '',
-               email: user.email || ''
-             }
-           }
-         }
-       );
+      // Use the reliable confirmCardPayment method with card element
+      const { error, paymentIntent: confirmedPaymentIntent } = await stripeState.stripe.confirmCardPayment(
+        response.clientSecret,
+        {
+          payment_method: {
+            card: stripeState.cardElement,
+            billing_details: {
+              name: user.name || '',
+              email: user.email || ''
+            }
+          }
+        }
+      );
 
       if (error) {
         console.error('Payment failed:', error);
@@ -191,17 +191,8 @@ const TopUp: React.FC = () => {
       } else {
         console.log('Payment succeeded:', confirmedPaymentIntent);
         
-        // Update wallet balance after successful payment
-        const walletUpdateResponse = await ApiService.updateWalletBalance({
-          userId: user._id,
-          amount: topUpData.amount,
-          currency: topUpData.currency,
-          paymentIntentId: response.paymentIntentId,
-          status: 'completed'
-        });
-        
-        console.log('Wallet balance updated:', walletUpdateResponse);
-        setSuccess(`Payment completed! Amount $${topUpData.amount} added to wallet.`);
+        // Payment succeeded - webhook will handle balance update automatically
+        setSuccess(`Payment completed! Amount $${topUpData.amount} will be added to your wallet shortly.`);
         
         // Clear payment intent
         setPaymentIntent(null);
@@ -209,7 +200,7 @@ const TopUp: React.FC = () => {
         // Redirect to wallet to show updated balance
         setTimeout(() => {
           navigate('/wallet');
-        }, 2000);
+        }, 3000); // Give webhook time to process
       }
     } catch (err: any) {
       console.error('Payment processing failed:', err);
