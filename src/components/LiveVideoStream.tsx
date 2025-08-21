@@ -26,6 +26,7 @@ const LiveVideoStream: React.FC = () => {
   const [newChatMessage, setNewChatMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>('');
+  const [reactions, setReactions] = useState<{ id: string; emoji: string; x: number; y: number }[]>([]);
 
   // Refs
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -139,6 +140,14 @@ const LiveVideoStream: React.FC = () => {
       case 'viewer-left':
         handleViewerLeft(message.data);
         break;
+      case 'live-reaction': {
+        const payload = message.data as { emoji: string; position: { x: number; y: number } };
+        const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const x = Math.max(0, Math.min(1, payload.position?.x ?? Math.random()));
+        const y = Math.max(0, Math.min(1, payload.position?.y ?? Math.random()));
+        setReactions(prev => [...prev.slice(-9), { id, emoji: payload.emoji, x, y }]);
+        break;
+      }
     }
   }, []);
 
@@ -259,6 +268,20 @@ const LiveVideoStream: React.FC = () => {
     }
   };
 
+  const sendReaction = (emoji: string) => {
+    if (!challengeId) return;
+    // Randomize a nice floating position
+    const pos = { x: Math.random(), y: Math.random() * 0.6 + 0.1 };
+    websocketService.sendLiveReaction(challengeId, emoji, pos);
+    // Also render locally for instant feedback
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    setReactions(prev => [...prev.slice(-9), { id, emoji, x: pos.x, y: pos.y }]);
+    // Auto-clear oldest after a short delay
+    setTimeout(() => {
+      setReactions(prev => prev.filter(r => r.id !== id));
+    }, 2000);
+  };
+
   const leaveStream = () => {
     if (challengeId && userId) {
       websocketService.leaveChallenge(challengeId, userId);
@@ -324,6 +347,14 @@ const LiveVideoStream: React.FC = () => {
       </div>
 
       <div className="stream-content">
+        {/* Reactions overlay */}
+        <div className="reactions-overlay" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          {reactions.map(r => (
+            <div key={r.id} style={{ position: 'absolute', left: `${r.x * 100}%`, top: `${r.y * 100}%`, transform: 'translate(-50%, -50%)', fontSize: 28 }}>
+              {r.emoji}
+            </div>
+          ))}
+        </div>
         <div className="video-grid">
           {/* Local video */}
           {!isViewer && localStream && (
@@ -426,6 +457,12 @@ const LiveVideoStream: React.FC = () => {
       </div>
 
       <div className="stream-controls">
+        <div className="reactions-controls" style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => sendReaction('❤️')}>❤️</button>
+          <button onClick={() => sendReaction('🔥')}>🔥</button>
+          <button onClick={() => sendReaction('👏')}>👏</button>
+          <button onClick={() => sendReaction('👍')}>👍</button>
+        </div>
         <button onClick={leaveStream} className="leave-btn">
           Leave Stream
         </button>

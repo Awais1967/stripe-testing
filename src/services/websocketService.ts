@@ -12,7 +12,7 @@ export interface StreamParticipant {
 }
 
 export interface StreamMessage {
-  type: 'join' | 'leave' | 'offer' | 'answer' | 'ice-candidate' | 'chat' | 'viewer-joined' | 'viewer-left';
+  type: 'join' | 'leave' | 'offer' | 'answer' | 'ice-candidate' | 'chat' | 'viewer-joined' | 'viewer-left' | 'live-reaction';
   data: any;
   from: string;
   to?: string;
@@ -121,6 +121,11 @@ class WebSocketService {
           this.onChallengeUpdateCallbacks.forEach(callback => callback(challenges));
         });
 
+        // 5) Live reactions overlay
+        this.socket.on('live-reaction', (payload: { id: string; challengeId: string; userId: string; emoji: string; position: { x: number; y: number }; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'live-reaction', data: payload, from: payload.userId, timestamp: payload.timestamp });
+        });
+
       } catch (error) {
         reject(error);
       }
@@ -174,6 +179,13 @@ class WebSocketService {
   sendChatMessage(message: string, challengeId: string): void {
     if (!this.socket) return;
     this.socket.emit('send-stream-chat', { challengeId, message });
+  }
+
+  // Send live reaction (emoji overlay)
+  sendLiveReaction(challengeId: string, emoji: string, position?: { x: number; y: number }): void {
+    if (!this.socket) return;
+    const pos = position || { x: Math.random(), y: Math.random() };
+    this.socket.emit('send-live-reaction', { challengeId, emoji, position: pos });
   }
 
   // Create a new challenge
