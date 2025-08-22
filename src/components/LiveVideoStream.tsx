@@ -362,12 +362,12 @@ const LiveVideoStream: React.FC = () => {
   // --- Screen sharing controls ---
   const startScreenShare = async () => {
     try {
-      if (!challengeId) return;
+      if (!userId) return;
       const displayStream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true, audio: false });
       setScreenStream(displayStream);
       setIsScreenSharing(true);
 
-      websocketService.screenJoin(challengeId, 'presenter');
+      websocketService.screenJoin(userId, 'presenter');
 
       const peer = new RTCPeerConnection(rtcConfig);
       screenPeerRef.current = peer;
@@ -397,8 +397,8 @@ const LiveVideoStream: React.FC = () => {
       if (screenStream) {
         screenStream.getTracks().forEach(t => t.stop());
       }
-      websocketService.screenStop(challengeId);
-      websocketService.screenLeave(challengeId!);
+      websocketService.screenStop(userId);
+      websocketService.screenLeave(userId!);
     } finally {
       setIsScreenSharing(false);
       setScreenStream(null);

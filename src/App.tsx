@@ -54,7 +54,7 @@ function App() {
             <Route path="/join-challenge" element={<JoinChallenge />} />
             <Route path="/stream/:challengeId/:userId" element={<LiveVideoStream />} />
             <Route path="/stream/:challengeId/:userId/:opponentId" element={<LiveVideoStream />} />
-            <Route path="/screen-share/:challengeId" element={<ScreenShare />} />
+            <Route path="/screen-share/:userId" element={<ScreenShare />} />
           </Routes>
         </main>
       </div>

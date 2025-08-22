@@ -154,6 +154,14 @@ class WebSocketService {
           this.handleStreamMessage({ type: 'screen-stopped', data: payload, from: payload.userId, timestamp: payload.timestamp });
         });
 
+        // Screen chat/reaction events
+        this.socket.on('screen-chat', (chatPayload: { id: string; roomId: string; userId: string; message: string; messageType: string; timestamp?: number; displayName?: string; userImage?: string | null; }) => {
+          this.handleStreamMessage({ type: 'chat', data: chatPayload, from: chatPayload.userId, timestamp: chatPayload.timestamp || Date.now() });
+        });
+        this.socket.on('screen-reaction', (payload: { id: string; roomId: string; userId: string; emoji: string; position: { x: number; y: number }; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'live-reaction', data: payload, from: payload.userId, timestamp: payload.timestamp });
+        });
+
       } catch (error) {
         reject(error);
       }
@@ -203,7 +211,7 @@ class WebSocketService {
     this.socket.emit('stream-signal', { challengeId: this.currentChallengeId, signal: candidate });
   }
 
-  // Send chat message
+  // Send chat message (challenge stream)
   sendChatMessage(message: string, challengeId: string): void {
     if (!this.socket) return;
     this.socket.emit('send-stream-chat', { challengeId, message });
@@ -227,6 +235,22 @@ class WebSocketService {
     if (!this.socket) return;
     this.socket.emit('screen:leave', { roomId });
     if (this.currentScreenRoomId === roomId) this.currentScreenRoomId = null;
+  }
+
+  // Screen chat and reactions
+  sendScreenChat(message: string, roomId?: string): void {
+    if (!this.socket) return;
+    const room = roomId || this.currentScreenRoomId;
+    if (!room) return;
+    this.socket.emit('send-screen-chat', { roomId: room, message });
+  }
+
+  sendScreenReaction(emoji: string, position?: { x: number; y: number }, roomId?: string): void {
+    if (!this.socket) return;
+    const room = roomId || this.currentScreenRoomId;
+    if (!room) return;
+    const pos = position || { x: Math.random(), y: Math.random() };
+    this.socket.emit('send-screen-reaction', { roomId: room, emoji, position: pos });
   }
 
   screenSendOffer(offer: RTCSessionDescriptionInit, roomId?: string): void {

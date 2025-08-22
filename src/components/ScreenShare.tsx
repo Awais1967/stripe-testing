@@ -10,7 +10,7 @@ interface ChatMessage {
 }
 
 const ScreenShare: React.FC = () => {
-  const { challengeId } = useParams<{ challengeId: string }>();
+  const { userId: targetUserId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
 
   const [isConnected, setIsConnected] = useState(false);
@@ -46,19 +46,19 @@ const ScreenShare: React.FC = () => {
         await websocketService.connect(userId);
         setIsConnected(true);
         websocketService.onMessage(handleWsMessage);
-        if (!challengeId) {
-          setError('Missing challengeId');
+        if (!targetUserId) {
+          setError('Missing userId');
           return;
         }
-        // Join screen room as viewer by default
-        websocketService.screenJoin(challengeId, 'viewer');
+        // Join screen room keyed by target user id as viewer by default
+        websocketService.screenJoin(targetUserId, 'viewer');
       } catch (e: any) {
         setError(e?.message || 'Failed to connect');
       }
     };
     run();
     return () => cleanup();
-  }, [challengeId]);
+  }, [targetUserId]);
 
   const handleWsMessage = useCallback((message: StreamMessage) => {
     switch (message.type) {
@@ -104,12 +104,12 @@ const ScreenShare: React.FC = () => {
         if (remoteScreenRef.current) remoteScreenRef.current.srcObject = event.streams[0];
       };
       peer.onicecandidate = (event) => {
-        if (event.candidate) websocketService.screenSendIce(event.candidate, challengeId);
+        if (event.candidate) websocketService.screenSendIce(event.candidate, targetUserId);
       };
       await peer.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
-      websocketService.screenSendAnswer(answer, challengeId);
+      websocketService.screenSendAnswer(answer, targetUserId);
     } catch (e) {
       console.error('Error handling screen offer:', e);
     }
@@ -134,23 +134,23 @@ const ScreenShare: React.FC = () => {
   };
 
   const startPresenting = async () => {
-    if (!challengeId) return;
+    if (!targetUserId) return;
     try {
       const displayStream: MediaStream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true, audio: false });
       localDisplayStreamRef.current = displayStream;
       if (localScreenRef.current) localScreenRef.current.srcObject = displayStream;
       setIsPresenting(true);
-      websocketService.screenJoin(challengeId, 'presenter');
+      websocketService.screenJoin(targetUserId, 'presenter');
 
       const peer = new RTCPeerConnection(rtcConfig);
       screenPeerRef.current = peer;
       displayStream.getTracks().forEach((track: MediaStreamTrack) => peer.addTrack(track, displayStream));
       peer.onicecandidate = (event) => {
-        if (event.candidate) websocketService.screenSendIce(event.candidate, challengeId);
+        if (event.candidate) websocketService.screenSendIce(event.candidate, targetUserId);
       };
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      websocketService.screenSendOffer(offer, challengeId);
+      websocketService.screenSendOffer(offer, targetUserId);
 
       const [videoTrack] = displayStream.getVideoTracks();
       if (videoTrack) {
@@ -169,8 +169,8 @@ const ScreenShare: React.FC = () => {
       if (localDisplayStreamRef.current) {
         localDisplayStreamRef.current.getTracks().forEach((t: MediaStreamTrack) => t.stop());
       }
-      websocketService.screenStop(challengeId);
-      websocketService.screenLeave(challengeId!);
+      websocketService.screenStop(targetUserId);
+      websocketService.screenLeave(targetUserId!);
     } finally {
       setIsPresenting(false);
       localDisplayStreamRef.current = null;
@@ -183,15 +183,15 @@ const ScreenShare: React.FC = () => {
   };
 
   const sendChatMessage = () => {
-    if (!newChatMessage.trim() || !challengeId) return;
-    websocketService.sendChatMessage(newChatMessage, challengeId);
+    if (!newChatMessage.trim() || !targetUserId) return;
+    websocketService.sendScreenChat(newChatMessage, targetUserId);
     setNewChatMessage('');
   };
 
   const sendReaction = (emoji: string) => {
-    if (!challengeId) return;
+    if (!targetUserId) return;
     const pos = { x: Math.random(), y: Math.random() * 0.6 + 0.1 };
-    websocketService.sendLiveReaction(challengeId, emoji, pos);
+    websocketService.sendScreenReaction(emoji, pos, targetUserId);
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     setReactions((prev) => [...prev.slice(-9), { id, emoji, x: pos.x, y: pos.y }]);
     setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2000);
@@ -206,7 +206,7 @@ const ScreenShare: React.FC = () => {
         screenPeerRef.current.close();
         screenPeerRef.current = null;
       }
-      if (challengeId) websocketService.screenLeave(challengeId);
+      if (targetUserId) websocketService.screenLeave(targetUserId);
       websocketService.disconnect();
     } catch {}
   };
