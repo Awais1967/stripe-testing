@@ -12,7 +12,8 @@ export interface StreamParticipant {
 }
 
 export interface StreamMessage {
-  type: 'join' | 'leave' | 'offer' | 'answer' | 'ice-candidate' | 'chat' | 'viewer-joined' | 'viewer-left' | 'live-reaction';
+  type: 'join' | 'leave' | 'offer' | 'answer' | 'ice-candidate' | 'chat' | 'viewer-joined' | 'viewer-left' | 'live-reaction' |
+        'screen-offer' | 'screen-answer' | 'screen-ice' | 'screen-user-joined' | 'screen-user-left' | 'screen-joined' | 'screen-stopped';
   data: any;
   from: string;
   to?: string;
@@ -43,6 +44,7 @@ class WebSocketService {
   private wsUrl = process.env.REACT_APP_WS_URL || 'http://localhost:5000';
 
   private currentChallengeId: string | null = null;
+  private currentScreenRoomId: string | null = null;
 
   connect(userId: string, token?: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -91,8 +93,8 @@ class WebSocketService {
         });
 
         // 3) Chat messages
-        this.socket.on('stream-chat', (chatPayload: { id: string; challengeId: string; userId: string; message: string; messageType: string; timestamp: number; }) => {
-          this.handleStreamMessage({ type: 'chat', data: { message: chatPayload.message, challengeId: chatPayload.challengeId }, from: chatPayload.userId, timestamp: chatPayload.timestamp });
+        this.socket.on('stream-chat', (chatPayload: { id: string; challengeId: string; userId: string; message: string; messageType: string; timestamp?: number; displayName?: string; userImage?: string | null; }) => {
+          this.handleStreamMessage({ type: 'chat', data: chatPayload, from: chatPayload.userId, timestamp: chatPayload.timestamp || Date.now() });
         });
 
         // 4) WebRTC signaling passthrough
@@ -124,6 +126,32 @@ class WebSocketService {
         // 5) Live reactions overlay
         this.socket.on('live-reaction', (payload: { id: string; challengeId: string; userId: string; emoji: string; position: { x: number; y: number }; timestamp: number; }) => {
           this.handleStreamMessage({ type: 'live-reaction', data: payload, from: payload.userId, timestamp: payload.timestamp });
+        });
+
+        // --- Screen sharing events ---
+        this.socket.on('screen:joined', (payload: { roomId: string; userId: string; role: string; viewerCount: number; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'screen-joined', data: payload, from: payload.userId, timestamp: payload.timestamp });
+        });
+        this.socket.on('screen:user-joined', (payload: { roomId: string; userId: string; role: string; viewerCount: number; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'screen-user-joined', data: payload, from: payload.userId, timestamp: payload.timestamp });
+        });
+        this.socket.on('screen:user-left', (payload: { roomId: string; userId: string; viewerCount: number; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'screen-user-left', data: payload, from: payload.userId, timestamp: payload.timestamp });
+        });
+        this.socket.on('screen:signal', (payload: { signal: any; from?: string }) => {
+          const { signal, from } = payload || {};
+          if (!signal) return;
+          const ts = Date.now();
+          if (signal.type === 'offer') {
+            this.handleStreamMessage({ type: 'screen-offer', data: signal, from: from || 'unknown', timestamp: ts });
+          } else if (signal.type === 'answer') {
+            this.handleStreamMessage({ type: 'screen-answer', data: signal, from: from || 'unknown', timestamp: ts });
+          } else if (signal.candidate) {
+            this.handleStreamMessage({ type: 'screen-ice', data: signal, from: from || 'unknown', timestamp: ts });
+          }
+        });
+        this.socket.on('screen:stopped', (payload: { roomId: string; userId: string; timestamp: number; }) => {
+          this.handleStreamMessage({ type: 'screen-stopped', data: payload, from: payload.userId, timestamp: payload.timestamp });
         });
 
       } catch (error) {
@@ -186,6 +214,47 @@ class WebSocketService {
     if (!this.socket) return;
     const pos = position || { x: Math.random(), y: Math.random() };
     this.socket.emit('send-live-reaction', { challengeId, emoji, position: pos });
+  }
+
+  // --- Screen sharing API ---
+  screenJoin(roomId: string, role: 'presenter' | 'viewer' = 'viewer'): void {
+    if (!this.socket) return;
+    this.currentScreenRoomId = roomId;
+    this.socket.emit('screen:join', { roomId, role });
+  }
+
+  screenLeave(roomId: string): void {
+    if (!this.socket) return;
+    this.socket.emit('screen:leave', { roomId });
+    if (this.currentScreenRoomId === roomId) this.currentScreenRoomId = null;
+  }
+
+  screenSendOffer(offer: RTCSessionDescriptionInit, roomId?: string): void {
+    if (!this.socket) return;
+    const room = roomId || this.currentScreenRoomId;
+    if (!room) return;
+    this.socket.emit('screen:signal', { roomId: room, signal: offer });
+  }
+
+  screenSendAnswer(answer: RTCSessionDescriptionInit, roomId?: string): void {
+    if (!this.socket) return;
+    const room = roomId || this.currentScreenRoomId;
+    if (!room) return;
+    this.socket.emit('screen:signal', { roomId: room, signal: answer });
+  }
+
+  screenSendIce(candidate: RTCIceCandidateInit, roomId?: string): void {
+    if (!this.socket) return;
+    const room = roomId || this.currentScreenRoomId;
+    if (!room) return;
+    this.socket.emit('screen:signal', { roomId: room, signal: candidate });
+  }
+
+  screenStop(roomId?: string): void {
+    if (!this.socket) return;
+    const room = roomId || this.currentScreenRoomId;
+    if (!room) return;
+    this.socket.emit('screen:stop', { roomId: room });
   }
 
   // Create a new challenge

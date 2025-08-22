@@ -21,6 +21,7 @@ import WithdrawalRequest from './components/WithdrawalRequest';
 import WithdrawalApproval from './components/WithdrawalApproval';
 import FriendRequestWebSocketTester from './components/FriendRequestWebSocketTester';
 import JoinChallenge from './components/JoinChallenge';
+import ScreenShare from './components/ScreenShare';
 
 function App() {
   return (
@@ -53,6 +54,7 @@ function App() {
             <Route path="/join-challenge" element={<JoinChallenge />} />
             <Route path="/stream/:challengeId/:userId" element={<LiveVideoStream />} />
             <Route path="/stream/:challengeId/:userId/:opponentId" element={<LiveVideoStream />} />
+            <Route path="/screen-share/:challengeId" element={<ScreenShare />} />
           </Routes>
         </main>
       </div>

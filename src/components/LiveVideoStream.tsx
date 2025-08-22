@@ -7,7 +7,8 @@ interface ChatMessage {
   userId: string;
   displayName: string;
   message: string;
-  timestamp: number;
+ 
+  userImage?: string | null;
 }
 
 const LiveVideoStream: React.FC = () => {
@@ -27,12 +28,15 @@ const LiveVideoStream: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [reactions, setReactions] = useState<{ id: string; emoji: string; x: number; y: number }[]>([]);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
 
   // Refs
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideosRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
+  const screenVideoRef = useRef<HTMLVideoElement>(null);
 
   // WebRTC configuration
   const rtcConfig: RTCConfiguration = {
@@ -122,6 +126,21 @@ const LiveVideoStream: React.FC = () => {
     console.log('Received message:', message);
 
     switch (message.type) {
+      case 'screen-offer':
+        handleScreenOffer(message.from, message.data);
+        break;
+      case 'screen-answer':
+        handleScreenAnswer(message.from, message.data);
+        break;
+      case 'screen-ice':
+        handleScreenIceCandidate(message.from, message.data);
+        break;
+      case 'screen-joined':
+      case 'screen-user-joined':
+      case 'screen-user-left':
+      case 'screen-stopped':
+        // Could add UI updates if needed
+        break;
       case 'offer':
         handleOffer(message.from, message.data);
         break;
@@ -151,6 +170,13 @@ const LiveVideoStream: React.FC = () => {
     }
   }, []);
 
+  // Attach screen stream to dedicated video element
+  useEffect(() => {
+    if (screenVideoRef.current) {
+      screenVideoRef.current.srcObject = screenStream || null;
+    }
+  }, [screenStream]);
+
   const handleParticipantUpdate = useCallback((participants: StreamParticipant[]) => {
     console.log('Participants updated:', participants);
     setParticipants(participants);
@@ -168,7 +194,7 @@ const LiveVideoStream: React.FC = () => {
       const peerConnection = createPeerConnection(from);
       
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
+        localStreamRef.current.getTracks().forEach((track: MediaStreamTrack) => {
           peerConnection.addTrack(track, localStreamRef.current!);
         });
       }
@@ -180,6 +206,52 @@ const LiveVideoStream: React.FC = () => {
       websocketService.sendAnswer(from, answer);
     } catch (err) {
       console.error('Error handling offer:', err);
+    }
+  };
+
+  // --- Screen share WebRTC helpers ---
+  const screenPeerRef = useRef<RTCPeerConnection | null>(null);
+
+  const handleScreenOffer = async (from: string, offer: RTCSessionDescriptionInit) => {
+    try {
+      const peer = new RTCPeerConnection(rtcConfig);
+      screenPeerRef.current = peer;
+      peer.ontrack = (event) => {
+        setScreenStream(event.streams[0]);
+      };
+      peer.onicecandidate = (event) => {
+        if (event.candidate) {
+          websocketService.screenSendIce(event.candidate);
+        }
+      };
+      await peer.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      websocketService.screenSendAnswer(answer);
+    } catch (e) {
+      console.error('Error handling screen offer:', e);
+    }
+  };
+
+  const handleScreenAnswer = async (_from: string, answer: RTCSessionDescriptionInit) => {
+    try {
+      const peer = screenPeerRef.current;
+      if (peer) {
+        await peer.setRemoteDescription(new RTCSessionDescription(answer));
+      }
+    } catch (e) {
+      console.error('Error handling screen answer:', e);
+    }
+  };
+
+  const handleScreenIceCandidate = async (_from: string, candidate: RTCIceCandidateInit) => {
+    try {
+      const peer = screenPeerRef.current;
+      if (peer) {
+        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    } catch (e) {
+      console.error('Error handling screen ICE:', e);
     }
   };
 
@@ -206,13 +278,18 @@ const LiveVideoStream: React.FC = () => {
   };
 
   const handleChatMessage = (message: StreamMessage) => {
+    const payload = message.data || ({} as any);
+    const displayNameFromPayload = (payload.displayName as string | undefined);
+    const userImageFromPayload = (payload.userImage as string | null | undefined);
     const chatMessage: ChatMessage = {
-      id: Date.now().toString(),
+      id: (payload.id as string) || Date.now().toString(),
       userId: message.from,
-      displayName: participants.find(p => p.userId === message.from)?.displayName || 'Unknown',
-      message: message.data.message,
-      timestamp: message.timestamp
+      displayName: displayNameFromPayload || (participants.find(p => p.userId === message.from)?.displayName) || 'Unknown',
+      message: payload.message || '',
+      // timestamp: message.timestamp || Date.now(),
+      userImage: userImageFromPayload ?? undefined,
     };
+    console.log('Chat message:', chatMessage);
     setChatMessages(prev => [...prev, chatMessage]);
   };
 
@@ -282,6 +359,56 @@ const LiveVideoStream: React.FC = () => {
     }, 2000);
   };
 
+  // --- Screen sharing controls ---
+  const startScreenShare = async () => {
+    try {
+      if (!challengeId) return;
+      const displayStream = await (navigator.mediaDevices as any).getDisplayMedia({ video: true, audio: false });
+      setScreenStream(displayStream);
+      setIsScreenSharing(true);
+
+      websocketService.screenJoin(challengeId, 'presenter');
+
+      const peer = new RTCPeerConnection(rtcConfig);
+      screenPeerRef.current = peer;
+      displayStream.getTracks().forEach((track: MediaStreamTrack) => peer.addTrack(track, displayStream));
+      peer.onicecandidate = (event) => {
+        if (event.candidate) {
+          websocketService.screenSendIce(event.candidate);
+        }
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      websocketService.screenSendOffer(offer);
+
+      displayStream.getVideoTracks()[0].addEventListener('ended', () => {
+        stopScreenShare();
+      });
+    } catch (e) {
+      console.error('Failed to start screen share:', e);
+      setIsScreenSharing(false);
+      setScreenStream(null);
+    }
+  };
+
+  const stopScreenShare = () => {
+    try {
+      if (screenStream) {
+        screenStream.getTracks().forEach(t => t.stop());
+      }
+      websocketService.screenStop(challengeId);
+      websocketService.screenLeave(challengeId!);
+    } finally {
+      setIsScreenSharing(false);
+      setScreenStream(null);
+      if (screenPeerRef.current) {
+        screenPeerRef.current.close();
+        screenPeerRef.current = null;
+      }
+    }
+  };
+
   const leaveStream = () => {
     if (challengeId && userId) {
       websocketService.leaveChallenge(challengeId, userId);
@@ -294,6 +421,11 @@ const LiveVideoStream: React.FC = () => {
     // Stop local stream
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
+    }
+
+    // Stop screen share stream
+    if (screenStream) {
+      screenStream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
     }
 
     // Close peer connections
@@ -355,6 +487,23 @@ const LiveVideoStream: React.FC = () => {
             </div>
           ))}
         </div>
+
+        {/* Screen Share Panel */}
+        {screenStream && (
+          <div className="screen-share-section" style={{ marginTop: 16 }}>
+            <h3>Screen Share</h3>
+            <div className="screen-share-container">
+              <video
+                ref={screenVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="screen-share-video"
+                style={{ width: '100%', borderRadius: 8, background: '#000' }}
+              />
+            </div>
+          </div>
+        )}
         <div className="video-grid">
           {/* Local video */}
           {!isViewer && localStream && (
@@ -434,11 +583,9 @@ const LiveVideoStream: React.FC = () => {
             <div className="chat-messages">
               {chatMessages.map(message => (
                 <div key={message.id} className="chat-message">
-                  <span className="message-author">{message.displayName}:</span>
+                  <span className="message-author">{message.displayName}</span>
                   <span className="message-text">{message.message}</span>
-                  <span className="message-time">
-                    {new Date(message.timestamp).toLocaleTimeString()}
-                  </span>
+                 
                 </div>
               ))}
             </div>
@@ -462,10 +609,19 @@ const LiveVideoStream: React.FC = () => {
           <button onClick={() => sendReaction('🔥')}>🔥</button>
           <button onClick={() => sendReaction('👏')}>👏</button>
           <button onClick={() => sendReaction('👍')}>👍</button>
+          <button onClick={() => sendReaction('✋')}>✋</button>
         </div>
         <button onClick={leaveStream} className="leave-btn">
           Leave Stream
         </button>
+        {/* Screen sharing controls - kept separate from live streaming */}
+        {!isViewer && (
+          isScreenSharing ? (
+            <button onClick={stopScreenShare} className="leave-btn">Stop Screen Share</button>
+          ) : (
+            <button onClick={startScreenShare} className="control-btn">Start Screen Share</button>
+          )
+        )}
       </div>
     </div>
   );
